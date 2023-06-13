@@ -1,3 +1,4 @@
+"""Command line interface."""
 from pathlib import Path
 
 import click
@@ -6,8 +7,11 @@ from . import orm, pdu, util
 
 
 @click.group()
-def cli():
-    pass
+def cli() -> None:
+    """Fast parallel disk usage analysis.
+
+    Think du, but it actually works on cedar.
+    """
 
 
 @cli.command()
@@ -35,8 +39,8 @@ def cli():
         "This may be faster, with potential consistency issues."
     ),
 )
-def scan(path, output, workers, in_memory):
-
+def scan(path: Path, output: str, workers: int, in_memory: bool) -> None:
+    """Scan the tree at the given PATH and save the results into OUTPUT."""
     if in_memory:
         orm.database.init(":memory:", pragmas={"foreign_keys": 1})
     else:
@@ -93,8 +97,8 @@ def scan(path, output, workers, in_memory):
     default="S",
     help="Comma separated list of columns to print (e.g. C,S)",
 )
-def du(inputfile, depth, unit, quota, fields):
-    """Query the INPUTFILE to get a du like output of the space usage.
+def du(inputfile: str, depth: int | None, unit: str, fields: str, quota: bool) -> None:
+    r"""Query the INPUTFILE to get a du like output of the space usage.
 
     \b
     Valid column codes:

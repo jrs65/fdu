@@ -1,3 +1,5 @@
+"""Database tables."""
+
 from enum import Enum
 from typing import Self, TypeVar
 
@@ -14,19 +16,21 @@ E = TypeVar("E", bound=Enum)
 
 
 class EnumField(pw.SmallIntegerField):
-    """This class enable an Enum like field for Peewee.
+    """An Enum like field for Peewee.
 
     Taken from: https://github.com/coleifer/peewee/issues/630#issuecomment-459404401
     """
 
-    def __init__(self, choices: type[E], *args, **kwargs):
+    def __init__(self, choices: type[E], *args: tuple, **kwargs: dict):
         super().__init__(*args, **kwargs)
         self.choices = choices
 
     def db_value(self, value: E) -> int:
+        """Convert to the DB type."""
         return value.value
 
     def python_value(self, value: int) -> E:
+        """Convert to the Python type."""
         return self.choices(value)
 
 
@@ -34,6 +38,8 @@ class BaseModel(pw.Model):
     """Base model class."""
 
     class Meta:
+        """Meta info."""
+
         database = database
 
 
@@ -89,7 +95,8 @@ class Directory(BaseModel):
     mtime
         UTC Unix timestamp of the last modification.
     scan_status
-        The status of the directory scan. See `ScanStatus` for the mapping from states to the underlying integers.
+        The status of the directory scan. See `ScanStatus` for the mapping from states
+        to the underlying integers.
     children
         List of the sub directories.
     allocated_size_dir, apparent_size_dir, mtime_dir
@@ -120,8 +127,8 @@ class Directory(BaseModel):
 
     @classmethod
     def query_totals(cls) -> pw.ModelSelect:
-        """A base query to select directories while summing the directory totals."""
-        query = (
+        """Base query to select directories with directory totals."""
+        return (
             cls.select(
                 cls,
                 fn.Count(File).alias("file_count_dir"),
@@ -135,8 +142,6 @@ class Directory(BaseModel):
             .join(File, pw.JOIN.LEFT_OUTER)
             .group_by(cls)
         )
-
-        return query
 
     def _sum_subdirs(self) -> None:
         """Sum up information from the subdirectories into the subtree totals."""
@@ -189,6 +194,8 @@ class File(BaseModel):
     num_links = pw.SmallIntegerField()
 
     class Meta:
+        """Set an index on this table."""
+
         indexes = (
             # create a unique on files names within a directory
             (("name", "directory"), True),

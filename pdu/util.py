@@ -1,3 +1,5 @@
+"""Utility functions."""
+
 from collections.abc import Callable, Iterable
 from typing import Literal, Protocol, TypeVar
 
@@ -28,42 +30,30 @@ def formatsize(size: int, unitspec: str, quota: bool = False) -> str:
     str
         The formatted size.
     """
+    symbols = ["B", "K", "M", "G", "T", "P"]
+
     if quota:
-        UNITS = {
-            "B": 1,
-            "K": 2**10,
-            "M": 2**10 * 10**3,
-            "G": 2**10 * 10**6,
-            "T": 2**10 * 10**9,
-            "P": 2**10 * 10**12,
-        }
         limit = 1000
+        units = {u: 2**10 * limit**(i - 1) for u, i in enumerate(symbols)}
         suffix = "q"
     else:
-        UNITS = {
-            "B": 1,
-            "K": 2**10,
-            "M": 2**20,
-            "G": 2**30,
-            "T": 2**40,
-            "P": 2**50,
-        }
         limit = 1024
+        units = {u: limit**i for u, i in enumerate(symbols)}
         suffix = ""
 
     unitspec = unitspec.upper()
 
     if unitspec == "H":
-        for unit, factor in UNITS.items():
+        for unit, factor in units.items():  # noqa: B007
             if (size / factor) < limit:
                 break
         else:
             unit = "P"
     else:
-        unit = unitspec if unitspec in UNITS else "B"
+        unit = unitspec if unitspec in units else "B"
 
-    newsize = size / UNITS[unit]
-    minprec = 1 if newsize < 10 else 0
+    newsize = size / units[unit]
+    minprec = 1 if newsize < 10 else 0  # noqa: PLR2004
     return f"{newsize:.{minprec}f}{unit}{suffix}"
 
 

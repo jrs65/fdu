@@ -1,3 +1,5 @@
+"""Main routines."""
+
 import concurrent.futures
 import datetime
 import grp
@@ -24,7 +26,7 @@ def process_dir(
     files: list[tuple[str, os.stat_result]] = []
 
     try:
-        dirstat = os.stat(path)
+        dirstat = path.stat()
 
         for d in os.scandir(path):
             if d.is_dir(follow_symlinks=False):
@@ -39,6 +41,7 @@ def process_dir(
 
 
 def exclude_subdir(path: Path) -> str | None:
+    """Determine directories to exclude from scanning."""
     tail = path.parts[-1]
 
     if tail in [".git", "site-packages"]:
@@ -92,7 +95,15 @@ def _dir_from_path(path: Path, base: Path) -> Directory:
 
 
 def scan_path(root_path: Path, workers: int) -> None:
+    """Scan the directory tree and add to the database.
 
+    Parameters
+    ----------
+    root_path
+        The root to scan from.
+    workers
+        Number of parallel workers to use.
+    """
     count = 0
 
     with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as executor:
@@ -195,15 +206,16 @@ def build_tree(directories: Iterable[Directory]) -> Directory:
 
         if p_id is None:
             continue
-        elif p_id not in _dir_cache:
+
+        if p_id not in _dir_cache:
             raise RuntimeError(
                 "Iterable input must contain a complete tree, but can not find "
                 f"the parent_id {p_id} for {d}",
             )
-        else:
-            _dir_cache[p_id].children.append(d)
 
-    def _add_paths(d: Directory, depth: int) -> None:
+        _dir_cache[p_id].children.append(d)
+
+    def _add_paths(d: Directory, _: int) -> None:
         # A temporary function to walk the tree and set the paths and sort the children
 
         if d.parent_id:
@@ -215,17 +227,13 @@ def build_tree(directories: Iterable[Directory]) -> Directory:
         d.children.sort(key=lambda d: d.name)
 
     walk_tree(root, _add_paths, order="pre")
-    walk_tree(root, lambda x, _: x._sum_subdirs(), order="post")
+    walk_tree(root, lambda x, _: x._sum_subdirs(), order="post")  # noqa: SLF001
 
     return root
 
 
-def _print_tree(d: Directory, depth: int) -> None:
-    print(f"{depth * '  '}{d.name}")
-
-
 def print_directory_fn(
-    columns: list[str] = ["S"],
+    columns: list[str],
     unit: str = "K",
     quota: bool = False,
     isotime: bool = True,
@@ -277,7 +285,7 @@ def print_directory_fn(
         if c not in colspec:
             raise ValueError(f'Unsupported column code "{c}"')
 
-    def _print(d: Directory, depth: int):
+    def _print(d: Directory, _: int):
 
         output_columns = []
 
