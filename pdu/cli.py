@@ -1,4 +1,5 @@
 from pathlib import Path
+
 import click
 
 from . import orm, pdu, util
@@ -19,28 +20,38 @@ def cli():
     type=click.Path(dir_okay=False, file_okay=True, writable=True),
 )
 @click.option(
-    "-j", "--workers", type=int, default=1, help="Number of parallel workers to use"
+    "-j", "--workers", type=int, default=1, help="Number of parallel workers to use",
 )
-def scan(path, output, workers):
-    orm.database.init(":memory:", pragmas={'foreign_keys': 1})
+@click.option(
+    "--in-memory",
+    is_flag=True,
+    default=False,
+    help=(
+        "If set, use an in memory database and only write out at the very end. "
+        "This may be faster, with potential consistency issues."
+    ),
+)
+def scan(path, output, workers, in_memory):
 
-    # orm.database.init(
-    #     output,
-    #     pragmas={
-    #         "foreign_keys": 1,
-    #         "journal_mode": "wal",
-    #         #"synchronous": "normal",
-    #         "synchronous": "off",
-    #         "temp_store": "memory",
-    #         "mmap_size": 2**30,
-    #         "cache_size": -2**15,
-    #         #"locking_mode": "EXCLUSIVE"
-    #     },
-    # )
+    if in_memory:
+        orm.database.init(":memory:", pragmas={"foreign_keys": 1})
+    else:
+        orm.database.init(
+            output,
+            pragmas={
+                "foreign_keys": 1,
+                "journal_mode": "wal",
+                "synchronous": "off",
+                "temp_store": "memory",
+                "mmap_size": 2**30,
+                "cache_size": -2**15,
+            },
+        )
     orm.database.create_tables(orm.BaseModel.__subclasses__())
     pdu.scan_path(path, workers)
 
-    orm.database.execute_sql("VACUUM INTO ?", (output,))
+    if in_memory:
+        orm.database.execute_sql("VACUUM INTO ?", (output,))
 
     orm.database.close()
 
@@ -51,7 +62,7 @@ def scan(path, output, workers):
     type=click.Path(dir_okay=False, file_okay=True, exists=True),
 )
 @click.option(
-    "-d", "--depth", type=int, default=None, help="Maximum depth of tree to print."
+    "-d", "--depth", type=int, default=None, help="Maximum depth of tree to print.",
 )
 @click.option(
     "-u",

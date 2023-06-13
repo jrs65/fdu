@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Self, TypeVar, Type
+from typing import Self, TypeVar
 
 import peewee as pw
 from peewee import fn
@@ -10,7 +10,7 @@ from .util import agg_none
 database = pw.SqliteDatabase(None)
 
 
-E = TypeVar('E', bound=Enum)
+E = TypeVar("E", bound=Enum)
 
 
 class EnumField(pw.SmallIntegerField):
@@ -18,7 +18,8 @@ class EnumField(pw.SmallIntegerField):
 
     Taken from: https://github.com/coleifer/peewee/issues/630#issuecomment-459404401
     """
-    def __init__(self, choices: Type[E], *args, **kwargs):
+
+    def __init__(self, choices: type[E], *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.choices = choices
 
@@ -31,6 +32,7 @@ class EnumField(pw.SmallIntegerField):
 
 class BaseModel(pw.Model):
     """Base model class."""
+
     class Meta:
         database = database
 
@@ -45,6 +47,7 @@ class User(BaseModel):
     name
         The actual user name.
     """
+
     uid = pw.IntegerField(primary_key=True)
     name = pw.CharField(unique=True)
 
@@ -59,12 +62,14 @@ class Group(BaseModel):
     name
         The actual group name.
     """
+
     gid = pw.IntegerField(primary_key=True)
     name = pw.CharField(unique=True)
 
 
 class ScanStatus(Enum):
     """An enum type giving the possible outcomes of a scan."""
+
     NOT_SCANNED = 0
     SUCCESSFUL = 1
     SKIPPED_PERMISSION = 2
@@ -94,6 +99,7 @@ class Directory(BaseModel):
         The summed sizes, and maximum modification time of all files within the subtree
         starting at this directory. Set by `pdu.build_tree`.
     """
+
     name = pw.CharField()
     parent = pw.ForeignKeyField("self", null=True)
     mtime = pw.TimestampField(utc=True)
@@ -114,24 +120,21 @@ class Directory(BaseModel):
 
     @classmethod
     def query_totals(cls) -> pw.ModelSelect:
-        """A base query to select directories while summing the directory totals.
-        """
-
+        """A base query to select directories while summing the directory totals."""
         query = cls.select(
             cls,
             fn.Count(File).alias("file_count_dir"),
-            fn.IfNull(fn.Sum(File.allocated_size), 0).alias('allocated_size_dir'),
-            fn.IfNull(fn.Sum(File.apparent_size), 0).alias('apparent_size_dir'),
+            fn.IfNull(fn.Sum(File.allocated_size), 0).alias("allocated_size_dir"),
+            fn.IfNull(fn.Sum(File.apparent_size), 0).alias("apparent_size_dir"),
             fn.IfNull(
-                fn.Max(fn.Max(File.mtime), Directory.mtime), 0
-            ).alias('mtime_dir'),
+                fn.Max(fn.Max(File.mtime), Directory.mtime), 0,
+            ).alias("mtime_dir"),
         ).join(File, pw.JOIN.LEFT_OUTER).group_by(cls)
 
         return query
 
     def _sum_subdirs(self) -> None:
         """Sum up information from the subdirectories into the subtree totals."""
-
         if self.children is None:
             return
 
@@ -140,7 +143,7 @@ class Directory(BaseModel):
         self.apparent_size_tree = self.apparent_size_dir
         self.mtime_tree = self.mtime_dir
 
-        dirs = [self] + self.children
+        dirs = [self, *self.children]
 
         self.file_count_tree = agg_none([c.file_count_tree for c in dirs], sum)
         self.allocated_size_tree = agg_none([c.allocated_size_tree for c in dirs], sum)
@@ -183,7 +186,7 @@ class File(BaseModel):
     class Meta:
         indexes = (
             # create a unique on files names within a directory
-            (('name', 'directory'), True),
+            (("name", "directory"), True),
         )
 
 

@@ -1,5 +1,5 @@
-from typing import Callable, Protocol, Literal, TypeVar, Iterable
-
+from collections.abc import Callable, Iterable
+from typing import Literal, Protocol, TypeVar
 
 T = TypeVar("T")
 
@@ -28,7 +28,6 @@ def formatsize(size: int, unitspec: str, quota: bool = False) -> str:
     str
         The formatted size.
     """
-
     if quota:
         UNITS = {
             "B": 1,
@@ -109,7 +108,7 @@ def walk_tree(
         elif order == "bfs":
             stack = stack + children
         elif order == "post" and d.children and depth >= last_depth:
-            stack = children + [(d, depth)] + stack
+            stack = [*children, (d, depth), *stack]
             continue
 
         # Process the current node
@@ -117,7 +116,7 @@ def walk_tree(
 
 
 def _skip(xl: Iterable[T | None]) -> list[T]:
-    return list(x for x in xl if x is not None)
+    return [x for x in xl if x is not None]
 
 
 def agg_none(xl: Iterable[T | None], f: Callable[[Iterable[T]], T]) -> T | None:
@@ -137,7 +136,6 @@ def agg_none(xl: Iterable[T | None], f: Callable[[Iterable[T]], T]) -> T | None:
     agg
         The aggregated value or `None` if the iterable had no valid elements.
     """
-
     xl = _skip(xl)
     if len(xl) == 0:
         return None

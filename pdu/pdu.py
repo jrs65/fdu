@@ -1,24 +1,23 @@
 import concurrent.futures
 import datetime
 import grp
-import pwd
 import os
-from pathlib import Path
+import pwd
 import sys
-from typing import Callable, Iterable
+from collections.abc import Callable, Iterable
+from pathlib import Path
 
-from .orm import User, Group, ScanStatus, Directory, File, database
-from .util import walk_tree, formatsize
+from .orm import Directory, File, Group, ScanStatus, User, database
+from .util import formatsize, walk_tree
 
 
 def process_dir(path: Path) -> tuple[Path, None] | tuple[
     Path,
     os.stat_result,
     list[tuple[str, os.stat_result]],
-    list[Path]
+    list[Path],
 ]:
     """Get the info for the current directory and the names of any subdirectories."""
-
     subdirs: list[Path] = []
     files: list[tuple[str, os.stat_result]] = []
 
@@ -101,7 +100,7 @@ def scan_path(root_path: Path, workers: int) -> None:
 
         while len(waiting) > 0:
             done, waiting = concurrent.futures.wait(
-                waiting, return_when=concurrent.futures.FIRST_COMPLETED
+                waiting, return_when=concurrent.futures.FIRST_COMPLETED,
             )
 
             with database.atomic():
@@ -175,7 +174,6 @@ def build_tree(directories: Iterable[Directory]) -> Directory:
     root
         The directory entry at the root of the tree.
     """
-
     _dir_cache = {}
 
     # First create a map of IDs to directories
@@ -197,7 +195,7 @@ def build_tree(directories: Iterable[Directory]) -> Directory:
         elif p_id not in _dir_cache:
             raise RuntimeError(
                 "Iterable input must contain a complete tree, but can not find "
-                f"the parent_id {p_id} for {d}"
+                f"the parent_id {p_id} for {d}",
             )
         else:
             _dir_cache[p_id].children.append(d)
@@ -274,7 +272,7 @@ def print_directory_fn(
 
     for c in columns:
         if c not in colspec:
-            raise ValueError(f"Unsupported column code \"{c}\"")
+            raise ValueError(f'Unsupported column code "{c}"')
 
     def _print(d: Directory, depth: int):
 
