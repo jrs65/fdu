@@ -20,7 +20,11 @@ def cli():
     type=click.Path(dir_okay=False, file_okay=True, writable=True),
 )
 @click.option(
-    "-j", "--workers", type=int, default=1, help="Number of parallel workers to use",
+    "-j",
+    "--workers",
+    type=int,
+    default=1,
+    help="Number of parallel workers to use",
 )
 @click.option(
     "--in-memory",
@@ -44,7 +48,7 @@ def scan(path, output, workers, in_memory):
                 "synchronous": "off",
                 "temp_store": "memory",
                 "mmap_size": 2**30,
-                "cache_size": -2**15,
+                "cache_size": -(2**15),
             },
         )
     orm.database.create_tables(orm.BaseModel.__subclasses__())
@@ -62,7 +66,11 @@ def scan(path, output, workers, in_memory):
     type=click.Path(dir_okay=False, file_okay=True, exists=True),
 )
 @click.option(
-    "-d", "--depth", type=int, default=None, help="Maximum depth of tree to print.",
+    "-d",
+    "--depth",
+    type=int,
+    default=None,
+    help="Maximum depth of tree to print.",
 )
 @click.option(
     "-u",

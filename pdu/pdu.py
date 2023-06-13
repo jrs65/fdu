@@ -11,7 +11,9 @@ from .orm import Directory, File, Group, ScanStatus, User, database
 from .util import formatsize, walk_tree
 
 
-def process_dir(path: Path) -> tuple[Path, None] | tuple[
+def process_dir(
+    path: Path,
+) -> tuple[Path, None] | tuple[
     Path,
     os.stat_result,
     list[tuple[str, os.stat_result]],
@@ -100,7 +102,8 @@ def scan_path(root_path: Path, workers: int) -> None:
 
         while len(waiting) > 0:
             done, waiting = concurrent.futures.wait(
-                waiting, return_when=concurrent.futures.FIRST_COMPLETED,
+                waiting,
+                return_when=concurrent.futures.FIRST_COMPLETED,
             )
 
             with database.atomic():

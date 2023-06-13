@@ -121,15 +121,20 @@ class Directory(BaseModel):
     @classmethod
     def query_totals(cls) -> pw.ModelSelect:
         """A base query to select directories while summing the directory totals."""
-        query = cls.select(
-            cls,
-            fn.Count(File).alias("file_count_dir"),
-            fn.IfNull(fn.Sum(File.allocated_size), 0).alias("allocated_size_dir"),
-            fn.IfNull(fn.Sum(File.apparent_size), 0).alias("apparent_size_dir"),
-            fn.IfNull(
-                fn.Max(fn.Max(File.mtime), Directory.mtime), 0,
-            ).alias("mtime_dir"),
-        ).join(File, pw.JOIN.LEFT_OUTER).group_by(cls)
+        query = (
+            cls.select(
+                cls,
+                fn.Count(File).alias("file_count_dir"),
+                fn.IfNull(fn.Sum(File.allocated_size), 0).alias("allocated_size_dir"),
+                fn.IfNull(fn.Sum(File.apparent_size), 0).alias("apparent_size_dir"),
+                fn.IfNull(
+                    fn.Max(fn.Max(File.mtime), Directory.mtime),
+                    0,
+                ).alias("mtime_dir"),
+            )
+            .join(File, pw.JOIN.LEFT_OUTER)
+            .group_by(cls)
+        )
 
         return query
 
@@ -188,5 +193,3 @@ class File(BaseModel):
             # create a unique on files names within a directory
             (("name", "directory"), True),
         )
-
-
