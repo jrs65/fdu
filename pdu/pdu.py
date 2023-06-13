@@ -1,11 +1,14 @@
 import concurrent.futures
+import datetime
 import grp
 import pwd
 import os
 from pathlib import Path
 import sys
+from typing import Callable, Iterable
 
-from .orm import User, Group, Directory, File
+from .orm import User, Group, ScanStatus, Directory, File, database
+from .util import walk_tree, formatsize
 
 
 def process_dir(path: Path) -> tuple[Path, None] | tuple[
@@ -70,7 +73,7 @@ def _group_from_gid(gid: int) -> Group:
 _dir_cache = {}
 
 
-def _dir_from_path(path: Path, base: Path):
+def _dir_from_path(path: Path, base: Path) -> Directory:
 
     if path not in _dir_cache:
 
@@ -101,47 +104,188 @@ def scan_path(root_path: Path, workers: int) -> None:
                 waiting, return_when=concurrent.futures.FIRST_COMPLETED
             )
 
-            for f in done:
-                r = f.result()
-                path = r[0]
-                info = r[1:]
-                d = _dir_from_path(path, root_path)
+            with database.atomic():
+                for f in done:
+                    r = f.result()
+                    path = r[0]
+                    info = r[1:]
+                    d = _dir_from_path(path, root_path)
 
-                if info[0] is None:
-                    d.scanned = False
-                    d.save()
-                    continue
-
-                dstat, files, subdirs = info
-
-                files_to_insert = []
-                for filename, s in files:
-                    file_row = {
-                        "name": filename,
-                        "directory": d,
-                        "actual_size": s.st_size,
-                        "apparent_size": (s.st_blocks * 512),
-                        "mtime": s.st_mtime,
-                        "num_links": s.st_nlink,
-                        "user": _user_from_uid(s.st_uid),
-                        "group": _group_from_gid(s.st_gid),
-                    }
-                    files_to_insert.append(file_row)
-
-                File.insert_many(files_to_insert).execute()
-
-                for sd in subdirs:
-                    if reason := exclude_subdir(sd):
-                        d = _dir_from_path(sd, path)
-                        d.scanned = False
+                    # No permissions to read the directory...
+                    if info[0] is None:
+                        d.scan_status = ScanStatus.SKIPPED_PERMISSION
                         d.save()
                         continue
 
-                    waiting.add(executor.submit(process_dir, sd))
+                    dstat, files, subdirs = info
+                    d.scan_status = ScanStatus.SUCCESSFUL
+                    d.mtime = dstat.st_mtime
+                    d.save()
 
-            count += 1
-            print(
-                f"Scanned {count} directories. Currently {root_path}",
-                file=sys.stderr,
-                end="\r",
+                    files_to_insert = []
+                    for filename, s in files:
+                        file_row = {
+                            "name": filename,
+                            "directory": d,
+                            "apparent_size": s.st_size,
+                            "allocated_size": (s.st_blocks * 512),
+                            "mtime": s.st_mtime,
+                            "num_links": s.st_nlink,
+                            "user": _user_from_uid(s.st_uid),
+                            "group": _group_from_gid(s.st_gid),
+                        }
+                        files_to_insert.append(file_row)
+
+                    File.insert_many(files_to_insert).execute()
+
+                    for sd in subdirs:
+                        if exclude_subdir(sd):
+                            sdi = _dir_from_path(sd, path)
+                            sdi.scan_status = ScanStatus.SKIPPED_EXCLUDE
+                            sdi.save()
+                            continue
+
+                        waiting.add(executor.submit(process_dir, sd))
+
+                    count += 1
+                    print(
+                        f"Scanned {count} directories. Currently {path}",
+                        file=sys.stderr,
+                        # \x1b[0K is VT100 erase to *end* of line
+                        # then \r is move cursor to the start
+                        end="\x1b[0K\r",
+                    )
+
+
+def build_tree(directories: Iterable[Directory]) -> Directory:
+    """Build a directory tree from a complete set of directory entries.
+
+    This will modify the nodes in the iterable:
+    - adds a `children` attribute which lists the subdirectories at each level
+    - adds a `path` attribute giving the full path of each entry.
+
+    Parameters
+    ----------
+    directories
+        An iterable (e.g. a peewee query) over directory entries. The members should
+        form a single complete tree.
+
+    Returns
+    -------
+    root
+        The directory entry at the root of the tree.
+    """
+
+    _dir_cache = {}
+
+    # First create a map of IDs to directories
+    for d in directories:
+        _dir_cache[d.id] = d
+
+        d.children = []
+
+        # Identify the root on this pass
+        if d.parent_id is None:
+            root = d
+
+    # Do a second pass to set the children of each node
+    for d in _dir_cache.values():
+        p_id = d.parent_id
+
+        if p_id is None:
+            continue
+        elif p_id not in _dir_cache:
+            raise RuntimeError(
+                "Iterable input must contain a complete tree, but can not find "
+                f"the parent_id {p_id} for {d}"
             )
+        else:
+            _dir_cache[p_id].children.append(d)
+
+    def _add_paths(d: Directory, depth: int) -> None:
+        # A temporary function to walk the tree and set the paths and sort the children
+
+        if d.parent_id:
+            parent = _dir_cache[d.parent_id]
+            d.path = parent.path / d.name
+        else:
+            d.path = Path(d.name)
+
+        d.children.sort(key=lambda d: d.name)
+
+    walk_tree(root, _add_paths, order="pre")
+    walk_tree(root, lambda x, _: x._sum_subdirs(), order="post")
+
+    return root
+
+
+def _print_tree(d: Directory, depth: int) -> None:
+    print(f"{depth * '  '}{d.name}")
+
+
+def print_directory_fn(
+    columns: list[str] = ["S"],
+    unit: str = "K",
+    quota: bool = False,
+    isotime: bool = True,
+) -> Callable[[Directory, int], None]:
+    """Print out the directory tree.
+
+    Parameters
+    ----------
+    d
+        The directory entry to print.
+    columns
+        The columns to output, given as a list of single character codes.
+        - `n`: the number of files in the directory
+        - `N`: the number of files in the subtree
+        - `s`: the allocated size of all files in the current directory
+        - `S`: the allocated size of all files in the subtree
+        - `a`: the apparent size of all files in the current directory
+        - `A`: the apparent size of all files in the subtree
+        - `t`: the latest modification time of the current directory and its files
+        - `T`: the latest modification time of the subtree and its files
+        Default is just `['S']` to reproduce the output of `du`.
+    unit
+        The units to output sizes in (B, K, M, G, T, P) or use H to determine a human
+        readable size.
+    quota
+        Use Compute Canada quota units, which are a weird base-10 and base-2 combo.
+    isotime
+        Output the timestamps in an isoformat.
+    """
+
+    def _ptime(time: int):
+        return datetime.fromtimestamp(time).isoformat() if isotime else int(time)
+
+    def _psize(size: int):
+        return formatsize(size, unit, quota)
+
+    colspec = {
+        "c": ["file_count_dir", 10, str],
+        "C": ["file_count_tree", 10, str],
+        "s": ["allocated_size_dir", 10, _psize],
+        "S": ["allocated_size_tree", 10, _psize],
+        "a": ["apparent_size_dir", 10, _psize],
+        "A": ["apparent_size_tree", 10, _psize],
+        "t": ["mtime_dir", 16, _ptime],
+        "T": ["mtime_tree", 16, _ptime],
+    }
+
+    for c in columns:
+        if c not in colspec:
+            raise ValueError(f"Unsupported column code \"{c}\"")
+
+    def _print(d: Directory, depth: int):
+
+        output_columns = []
+
+        for c in columns:
+            attr, width, fn = colspec[c]
+            output_columns.append(f"{fn(getattr(d, attr)):{width}s}")
+
+        output_columns.append(str(d.path))
+
+        print(*output_columns)
+
+    return _print

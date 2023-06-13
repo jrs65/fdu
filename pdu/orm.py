@@ -1,7 +1,32 @@
+from enum import Enum
+from typing import Self, TypeVar, Type
+
 import peewee as pw
+from peewee import fn
+
+from .util import agg_none
 
 # Sqlite database model
 database = pw.SqliteDatabase(None)
+
+
+E = TypeVar('E', bound=Enum)
+
+
+class EnumField(pw.SmallIntegerField):
+    """This class enable an Enum like field for Peewee.
+
+    Taken from: https://github.com/coleifer/peewee/issues/630#issuecomment-459404401
+    """
+    def __init__(self, choices: Type[E], *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.choices = choices
+
+    def db_value(self, value: E) -> int:
+        return value.value
+
+    def python_value(self, value: int) -> E:
+        return self.choices(value)
 
 
 class BaseModel(pw.Model):
@@ -38,6 +63,14 @@ class Group(BaseModel):
     name = pw.CharField(unique=True)
 
 
+class ScanStatus(Enum):
+    """An enum type giving the possible outcomes of a scan."""
+    NOT_SCANNED = 0
+    SUCCESSFUL = 1
+    SKIPPED_PERMISSION = 2
+    SKIPPED_EXCLUDE = 3
+
+
 class Directory(BaseModel):
     """Directory info.
 
@@ -48,13 +81,71 @@ class Directory(BaseModel):
         current level.
     parent
         A key to the parent directory. This will be null for the root entry.
-    scanned
-        Whether this directory was scanned or not. It may be skipped because of
-        exclude filters or permission issues.
+    mtime
+        UTC Unix timestamp of the last modification.
+    scan_status
+        The status of the directory scan. See `ScanStatus` for the mapping from states to the underlying integers.
+    children
+        List of the sub directories.
+    allocated_size_dir, apparent_size_dir, mtime_dir
+        The summed sizes, and maximum modification time of all files within the
+        directory. Only set directly or by special queries.
+    allocated_size_tree, apparent_size_tree, mtime_tree
+        The summed sizes, and maximum modification time of all files within the subtree
+        starting at this directory. Set by `pdu.build_tree`.
     """
     name = pw.CharField()
     parent = pw.ForeignKeyField("self", null=True)
-    scanned = pw.BooleanField(default=True)
+    mtime = pw.TimestampField(utc=True)
+
+    scan_status = EnumField(choices=ScanStatus, default=ScanStatus.NOT_SCANNED)
+
+    children: list[Self] | None = None
+
+    file_count_dir: int | None = None
+    allocated_size_dir: int | None = None
+    apparent_size_dir: int | None = None
+    mtime_dir: int | None = None
+
+    file_count_tree: int | None = None
+    allocated_size_tree: int | None = None
+    apparent_size_tree: int | None = None
+    mtime_tree: int | None = None
+
+    @classmethod
+    def query_totals(cls) -> pw.ModelSelect:
+        """A base query to select directories while summing the directory totals.
+        """
+
+        query = cls.select(
+            cls,
+            fn.Count(File).alias("file_count_dir"),
+            fn.IfNull(fn.Sum(File.allocated_size), 0).alias('allocated_size_dir'),
+            fn.IfNull(fn.Sum(File.apparent_size), 0).alias('apparent_size_dir'),
+            fn.IfNull(
+                fn.Max(fn.Max(File.mtime), Directory.mtime), 0
+            ).alias('mtime_dir'),
+        ).join(File, pw.JOIN.LEFT_OUTER).group_by(cls)
+
+        return query
+
+    def _sum_subdirs(self) -> None:
+        """Sum up information from the subdirectories into the subtree totals."""
+
+        if self.children is None:
+            return
+
+        self.file_count_tree = self.file_count_dir
+        self.allocated_size_tree = self.allocated_size_dir
+        self.apparent_size_tree = self.apparent_size_dir
+        self.mtime_tree = self.mtime_dir
+
+        dirs = [self] + self.children
+
+        self.file_count_tree = agg_none([c.file_count_tree for c in dirs], sum)
+        self.allocated_size_tree = agg_none([c.allocated_size_tree for c in dirs], sum)
+        self.apparent_size_tree = agg_none([c.apparent_size_tree for c in dirs], sum)
+        self.mtime_tree = agg_none([c.mtime_tree for c in dirs], max)
 
 
 class File(BaseModel):
@@ -68,7 +159,7 @@ class File(BaseModel):
         A key to the directory the file is in.
     user, group
         The owning user and group.
-    actual_size, apparent_size
+    allocated_size, apparent_size
         The actual and apparent file sizes.
     mtime
         UTC Unix timestamp of the last modification.
@@ -82,7 +173,7 @@ class File(BaseModel):
     user = pw.ForeignKeyField(User)
     group = pw.ForeignKeyField(Group)
 
-    actual_size = pw.IntegerField()
+    allocated_size = pw.IntegerField()
     apparent_size = pw.IntegerField()
 
     mtime = pw.TimestampField(utc=True)
