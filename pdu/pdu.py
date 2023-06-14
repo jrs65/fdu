@@ -9,18 +9,23 @@ import sys
 from collections.abc import Callable, Iterable
 from pathlib import Path
 
+import peewee as pw
+
 from .orm import Directory, File, Group, ScanStatus, User, database
 from .util import formatsize, walk_tree
 
 
 def process_dir(
     path: Path,
-) -> tuple[Path, None] | tuple[
-    Path,
-    os.stat_result,
-    list[tuple[str, os.stat_result]],
-    list[Path],
-]:
+) -> (
+    tuple[Path, None]
+    | tuple[
+        Path,
+        os.stat_result,
+        list[tuple[str, os.stat_result]],
+        list[Path],
+    ]
+):
     """Get the info for the current directory and the names of any subdirectories."""
     subdirs: list[Path] = []
     files: list[tuple[str, os.stat_result]] = []
@@ -54,7 +59,6 @@ _uid_cache = {}
 
 
 def _user_from_uid(uid: int) -> User:
-
     if uid not in _uid_cache:
         u = User.create(uid=uid, name=pwd.getpwuid(uid).pw_name)
         _uid_cache[uid] = u
@@ -66,7 +70,6 @@ _gid_cache = {}
 
 
 def _group_from_gid(gid: int) -> Group:
-
     if gid not in _gid_cache:
         g = Group.create(gid=gid, name=grp.getgrgid(gid).gr_name)
         _gid_cache[gid] = g
@@ -78,17 +81,17 @@ _dir_cache = {}
 
 
 def _dir_from_path(path: Path, base: Path) -> Directory:
-
     if path not in _dir_cache:
-
         if path == base:
             parent = None
+            name = str(path)
         elif path.is_relative_to(base):
             parent = _dir_from_path(path.parent, base)
+            name = path.name
         else:
             raise ValueError(f"{path} is not a descendent of the base path {base}")
 
-        d = Directory.create(name=path.name, parent=parent)
+        d = Directory.create(name=name, parent=parent)
         _dir_cache[path] = d
 
     return _dir_cache[path]
@@ -107,7 +110,6 @@ def scan_path(root_path: Path, workers: int) -> None:
     count = 0
 
     with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as executor:
-
         root_fut = executor.submit(process_dir, root_path)
         waiting = {root_fut}
 
@@ -149,7 +151,8 @@ def scan_path(root_path: Path, workers: int) -> None:
                         }
                         files_to_insert.append(file_row)
 
-                    File.insert_many(files_to_insert).execute()
+                    for chunk in pw.chunked(files_to_insert, 100):
+                        File.insert_many(chunk).execute()
 
                     for sd in subdirs:
                         if exclude_subdir(sd):
@@ -161,8 +164,14 @@ def scan_path(root_path: Path, workers: int) -> None:
                         waiting.add(executor.submit(process_dir, sd))
 
                     count += 1
+
+                    trimmed_path = str(path)
+
+                    if len(trimmed_path) > 80:
+                        trimmed_path = trimmed_path[:77] + "..."
+
                     print(
-                        f"Scanned {count} directories. Currently {path}",
+                        f"Scanned {count} directories. Currently {trimmed_path}",
                         file=sys.stderr,
                         # \x1b[0K is VT100 erase to *end* of line
                         # then \r is move cursor to the start
@@ -194,7 +203,7 @@ def build_tree(directories: Iterable[Directory]) -> Directory:
     for d in directories:
         _dir_cache[d.id] = d
 
-        d.children = []
+        d.subdirectories = {}
 
         # Identify the root on this pass
         if d.parent_id is None:
@@ -213,7 +222,7 @@ def build_tree(directories: Iterable[Directory]) -> Directory:
                 f"the parent_id {p_id} for {d}",
             )
 
-        _dir_cache[p_id].children.append(d)
+        _dir_cache[p_id].subdirectories[d.name] = d
 
     def _add_paths(d: Directory, _: int) -> None:
         # A temporary function to walk the tree and set the paths and sort the children
@@ -223,8 +232,6 @@ def build_tree(directories: Iterable[Directory]) -> Directory:
             d.path = parent.path / d.name
         else:
             d.path = Path(d.name)
-
-        d.children.sort(key=lambda d: d.name)
 
     walk_tree(root, _add_paths, order="pre")
     walk_tree(root, lambda x, _: x._sum_subdirs(), order="post")  # noqa: SLF001
@@ -237,13 +244,12 @@ def print_directory_fn(
     unit: str = "K",
     quota: bool = False,
     isotime: bool = True,
+    no_empty: bool = False,
 ) -> Callable[[Directory, int], None]:
     """Print out the directory tree.
 
     Parameters
     ----------
-    d
-        The directory entry to print.
     columns
         The columns to output, given as a list of single character codes.
         - `n`: the number of files in the directory
@@ -262,10 +268,14 @@ def print_directory_fn(
         Use Compute Canada quota units, which are a weird base-10 and base-2 combo.
     isotime
         Output the timestamps in an isoformat.
+    no_empty
+        Don't print empty directories.
     """
 
     def _ptime(time: int):
-        return datetime.fromtimestamp(time).isoformat() if isotime else int(time)
+        return (
+            datetime.datetime.fromtimestamp(time).isoformat() if isotime else int(time)
+        )
 
     def _psize(size: int):
         return formatsize(size, unit, quota)
@@ -286,6 +296,8 @@ def print_directory_fn(
             raise ValueError(f'Unsupported column code "{c}"')
 
     def _print(d: Directory, _: int):
+        if no_empty and d.file_count_tree == 0:
+            return
 
         output_columns = []
 
@@ -298,3 +310,37 @@ def print_directory_fn(
         print(*output_columns)
 
     return _print
+
+
+def extract_subtree(root: Directory, path: Path) -> Directory:
+    """Find the start of the given subtree.
+
+    Parameters
+    ----------
+    root
+        Root of the existing tree.
+    path
+        Path into the tree to extract.
+
+    Returns
+    -------
+    subroot
+        The root of the subtree.
+    """
+
+    if not path.is_relative_to(root.path):
+        raise ValueError(f"Given {path=} not within the tree root {root.path}")
+
+    path = path.relative_to(root.path)
+
+    node = root
+
+    for name in path.parts:
+        try:
+            node = node.subdirectories[name]
+        except KeyError as e:
+            raise RuntimeError(
+                f"Requested path {path} not found within tree anchored at {root.path}."
+            ) from e
+
+    return node

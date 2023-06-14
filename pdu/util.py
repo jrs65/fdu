@@ -34,11 +34,11 @@ def formatsize(size: int, unitspec: str, quota: bool = False) -> str:
 
     if quota:
         limit = 1000
-        units = {u: 2**10 * limit**(i - 1) for u, i in enumerate(symbols)}
+        units = {u: 2**10 * limit ** (i - 1) for i, u in enumerate(symbols)}
         suffix = "q"
     else:
         limit = 1024
-        units = {u: limit**i for u, i in enumerate(symbols)}
+        units = {u: limit**i for i, u in enumerate(symbols)}
         suffix = ""
 
     unitspec = unitspec.upper()

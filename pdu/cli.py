@@ -97,8 +97,29 @@ def scan(path: Path, output: str, workers: int, in_memory: bool) -> None:
     default="S",
     help="Comma separated list of columns to print (e.g. C,S)",
 )
-def du(inputfile: str, depth: int | None, unit: str, fields: str, quota: bool) -> None:
-    r"""Query the INPUTFILE to get a du like output of the space usage.
+@click.option(
+    "--subpath",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Query a subtree within a given dump.",
+)
+@click.option(
+    "--no-empty",
+    is_flag=True,
+    type=bool,
+    default=False,
+    help="Hide empty trees from the output.",
+)
+def du(
+    inputfile: str,
+    depth: int | None,
+    unit: str,
+    fields: str,
+    quota: bool,
+    subpath: Path,
+    no_empty: bool,
+) -> None:
+    """Query the INPUTFILE to get a du like output of the space usage.
 
     \b
     Valid column codes:
@@ -114,7 +135,12 @@ def du(inputfile: str, depth: int | None, unit: str, fields: str, quota: bool) -
     orm.database.init(inputfile)
     root = pdu.build_tree(orm.Directory.query_totals())
 
-    _print = pdu.print_directory_fn(columns=fields.split(","), unit=unit, quota=quota)
+    if subpath:
+        root = pdu.extract_subtree(root, subpath)
+
+    _print = pdu.print_directory_fn(
+        columns=fields.split(","), unit=unit, quota=quota, no_empty=no_empty
+    )
     util.walk_tree(root, _print, order="pre", maxdepth=depth)
 
     orm.database.close()

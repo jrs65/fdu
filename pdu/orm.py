@@ -113,7 +113,7 @@ class Directory(BaseModel):
 
     scan_status = EnumField(choices=ScanStatus, default=ScanStatus.NOT_SCANNED)
 
-    children: list[Self] | None = None
+    subdirectories: dict[str, Self] | None = None
 
     file_count_dir: int | None = None
     allocated_size_dir: int | None = None
@@ -131,7 +131,7 @@ class Directory(BaseModel):
         return (
             cls.select(
                 cls,
-                fn.Count(File).alias("file_count_dir"),
+                fn.Count(File.id).alias("file_count_dir"),
                 fn.IfNull(fn.Sum(File.allocated_size), 0).alias("allocated_size_dir"),
                 fn.IfNull(fn.Sum(File.apparent_size), 0).alias("apparent_size_dir"),
                 fn.IfNull(
@@ -159,6 +159,11 @@ class Directory(BaseModel):
         self.allocated_size_tree = agg_none([c.allocated_size_tree for c in dirs], sum)
         self.apparent_size_tree = agg_none([c.apparent_size_tree for c in dirs], sum)
         self.mtime_tree = agg_none([c.mtime_tree for c in dirs], max)
+
+    @property
+    def children(self) -> list[Self]:
+        subdir_names = sorted(self.subdirectories.keys())
+        return [self.subdirectories[name] for name in subdir_names]
 
 
 class File(BaseModel):
