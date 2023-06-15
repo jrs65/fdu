@@ -4,7 +4,7 @@ from pathlib import Path
 import click
 import peewee as pw
 
-from . import orm, pdu, util
+from . import orm, fdu, util
 
 
 @click.group()
