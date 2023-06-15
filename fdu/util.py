@@ -1,7 +1,7 @@
 """Utility functions."""
 
-from collections.abc import Callable, Iterable
 import os
+from collections.abc import Callable, Iterable
 from typing import Literal, Protocol, TypeVar
 
 T = TypeVar("T")
@@ -37,8 +37,6 @@ def formatsize(size: int, unitspec: str, quota: bool = False) -> str:
     str
         The formatted size.
     """
-    symbols = ["B", "K", "M", "G", "T", "P"]
-
     if quota:
         limit = 1000
         units = _units_quota
@@ -78,7 +76,6 @@ def parsesize(strsize: str) -> int:
     size
         The size in bytes.
     """
-
     try:
         if (unit := strsize[-1]).isalpha() and unit in _units_norm:
             return int(strsize[:-1]) * _units_norm[unit]
@@ -175,10 +172,9 @@ def print_trim(text: str, overwrite: bool = False, **kwargs: dict) -> None:
     kwargs
         Arguments passed directly to `print`.
     """
-
     ts = os.get_terminal_size()
 
-    trimmed_text = text[:ts.columns]
+    trimmed_text = text[: ts.columns]
 
     # \x1b[0K is VT100 erase to *end* of line then \r is move cursor to the start
     end = "\x1b[0K\r" if overwrite else "\n"

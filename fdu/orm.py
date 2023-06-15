@@ -1,8 +1,8 @@
 """Database tables."""
 
-from enum import Enum
 import json
-from typing import Self, TypeVar, TypeAlias
+from enum import Enum
+from typing import Self, TypeVar
 
 import peewee as pw
 from peewee import fn
@@ -238,7 +238,6 @@ class JSONField(pw.TextField):
 
     def db_value(self, value: JSONType) -> str:
         """Serialize the python values for storage in the db."""
-
         if value is None:
             return None
 
@@ -246,7 +245,6 @@ class JSONField(pw.TextField):
 
     def python_value(self, value: str) -> JSONType:
         """Deserialize the DB string to JSON."""
-
         if value is None:
             return None
 

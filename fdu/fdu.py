@@ -7,9 +7,9 @@ import os
 import pwd
 import re
 import sys
+import time
 from collections.abc import Callable, Iterable
 from pathlib import Path
-import time
 
 import peewee as pw
 
@@ -20,10 +20,10 @@ from .orm import (
     Metadata,
     ScanStatus,
     User,
-    database,
     __schema_version__,
+    database,
 )
-from .util import formatsize, walk_tree, print_trim
+from .util import formatsize, print_trim, walk_tree
 
 
 def _process_dir(
@@ -58,12 +58,7 @@ def _process_dir(
 
 def exclude_subdir(path: Path, patterns: list[str]) -> bool:
     """Determine directories to exclude from scanning."""
-
-    for pattern in patterns:
-        if re.match(pattern, str(path)):
-            return True
-
-    return False
+    return any(re.match(pattern, str(path)) for pattern in patterns)
 
 
 _uid_cache = {}

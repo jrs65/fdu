@@ -4,7 +4,7 @@ from pathlib import Path
 import click
 import peewee as pw
 
-from . import orm, fdu, util
+from . import fdu, orm, util
 
 
 @click.group()
@@ -41,7 +41,8 @@ def cli() -> None:
     ),
 )
 @click.option(
-    "-X", "--exclude",
+    "-X",
+    "--exclude",
     type=str,
     multiple=True,
     default=None,
@@ -52,7 +53,7 @@ def cli() -> None:
     ),
 )
 def scan(
-    path: Path, output: str, workers: int, in_memory: bool, exclude: list[str] | None
+    path: Path, output: str, workers: int, in_memory: bool, exclude: list[str] | None,
 ) -> None:
     """Scan the tree at the given PATH and save the results into OUTPUT."""
     if in_memory:
