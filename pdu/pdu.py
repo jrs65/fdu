@@ -5,17 +5,28 @@ import datetime
 import grp
 import os
 import pwd
+import re
 import sys
 from collections.abc import Callable, Iterable
 from pathlib import Path
+import time
 
 import peewee as pw
 
-from .orm import Directory, File, Group, ScanStatus, User, database
-from .util import formatsize, walk_tree
+from .orm import (
+    Directory,
+    File,
+    Group,
+    Metadata,
+    ScanStatus,
+    User,
+    database,
+    __schema_version__,
+)
+from .util import formatsize, walk_tree, print_trim
 
 
-def process_dir(
+def _process_dir(
     path: Path,
 ) -> (
     tuple[Path, None]
@@ -45,14 +56,14 @@ def process_dir(
     return path, dirstat, files, subdirs
 
 
-def exclude_subdir(path: Path) -> str | None:
+def exclude_subdir(path: Path, patterns: list[str]) -> bool:
     """Determine directories to exclude from scanning."""
-    tail = path.parts[-1]
 
-    if tail in [".git", "site-packages"]:
-        return tail
+    for pattern in patterns:
+        if re.match(pattern, str(path)):
+            return True
 
-    return None
+    return False
 
 
 _uid_cache = {}
@@ -97,7 +108,7 @@ def _dir_from_path(path: Path, base: Path) -> Directory:
     return _dir_cache[path]
 
 
-def scan_path(root_path: Path, workers: int) -> None:
+def scan_path(root_path: Path, workers: int, exclude_patterns: list[str]) -> None:
     """Scan the directory tree and add to the database.
 
     Parameters
@@ -106,11 +117,18 @@ def scan_path(root_path: Path, workers: int) -> None:
         The root to scan from.
     workers
         Number of parallel workers to use.
+    exclude_patterns
+        List of subdirectories to exclude.
     """
     count = 0
 
+    Metadata.create(key="path", value=str(root_path))
+    Metadata.create(key="schema", value=__schema_version__)
+
+    st = time.time()
+
     with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as executor:
-        root_fut = executor.submit(process_dir, root_path)
+        root_fut = executor.submit(_process_dir, root_path)
         waiting = {root_fut}
 
         while len(waiting) > 0:
@@ -155,28 +173,26 @@ def scan_path(root_path: Path, workers: int) -> None:
                         File.insert_many(chunk).execute()
 
                     for sd in subdirs:
-                        if exclude_subdir(sd):
+                        if exclude_subdir(sd, exclude_patterns):
                             sdi = _dir_from_path(sd, path)
                             sdi.scan_status = ScanStatus.SKIPPED_EXCLUDE
                             sdi.save()
                             continue
 
-                        waiting.add(executor.submit(process_dir, sd))
+                        waiting.add(executor.submit(_process_dir, sd))
 
                     count += 1
 
-                    trimmed_path = str(path)
-
-                    if len(trimmed_path) > 80:
-                        trimmed_path = trimmed_path[:77] + "..."
-
-                    print(
-                        f"Scanned {count} directories. Currently {trimmed_path}",
+                    print_trim(
+                        f"Scanned {count} directories. Currently {path}",
+                        overwrite=True,
                         file=sys.stderr,
-                        # \x1b[0K is VT100 erase to *end* of line
-                        # then \r is move cursor to the start
-                        end="\x1b[0K\r",
                     )
+
+    et = time.time()
+
+    Metadata.create(key="scrape_length", value=(et - st))
+    Metadata.create(key="scrape_time", value=datetime.datetime.now().timestamp())
 
 
 def build_tree(directories: Iterable[Directory]) -> Directory:
@@ -244,7 +260,6 @@ def print_directory_fn(
     unit: str = "K",
     quota: bool = False,
     isotime: bool = True,
-    no_empty: bool = False,
 ) -> Callable[[Directory, int], None]:
     """Print out the directory tree.
 
@@ -268,8 +283,6 @@ def print_directory_fn(
         Use Compute Canada quota units, which are a weird base-10 and base-2 combo.
     isotime
         Output the timestamps in an isoformat.
-    no_empty
-        Don't print empty directories.
     """
 
     def _ptime(time: int):
@@ -296,9 +309,6 @@ def print_directory_fn(
             raise ValueError(f'Unsupported column code "{c}"')
 
     def _print(d: Directory, _: int):
-        if no_empty and d.file_count_tree == 0:
-            return
-
         output_columns = []
 
         for c in columns:
@@ -327,7 +337,6 @@ def extract_subtree(root: Directory, path: Path) -> Directory:
     subroot
         The root of the subtree.
     """
-
     if not path.is_relative_to(root.path):
         raise ValueError(f"Given {path=} not within the tree root {root.path}")
 
@@ -340,7 +349,29 @@ def extract_subtree(root: Directory, path: Path) -> Directory:
             node = node.subdirectories[name]
         except KeyError as e:
             raise RuntimeError(
-                f"Requested path {path} not found within tree anchored at {root.path}."
+                f"Requested path {path} not found within tree anchored at {root.path}.",
             ) from e
 
     return node
+
+
+def filter_tree(root: Directory, f: Callable[[Directory], bool]) -> None:
+    """Filter out nodes in the tree.
+
+    Each directory in will be passed to the given function to indicate if it should be
+    retained. If not it will be deleted from the tree. Subdirectories are guaranteed to
+    be processed before their parents.
+
+    Parameters
+    ----------
+    root
+        The tree to process.
+    f
+        The filter function, it should return `True` to keep a node, and `False` to
+        delete it.
+    """
+
+    def _filter(d: Directory, _: int):
+        d.subdirectories = {n: c for n, c in d.subdirectories.items() if f(c)}
+
+    walk_tree(root, _filter, order="post")

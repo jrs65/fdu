@@ -1,7 +1,8 @@
 """Database tables."""
 
 from enum import Enum
-from typing import Self, TypeVar
+import json
+from typing import Self, TypeVar, TypeAlias
 
 import peewee as pw
 from peewee import fn
@@ -13,6 +14,9 @@ database = pw.SqliteDatabase(None)
 
 
 E = TypeVar("E", bound=Enum)
+JSONType = dict[str, "JSONType"] | list["JSONType"] | str | int | float | bool | None
+
+__schema_version__ = "2023.06"
 
 
 class EnumField(pw.SmallIntegerField):
@@ -104,7 +108,7 @@ class Directory(BaseModel):
         directory. Only set directly or by special queries.
     allocated_size_tree, apparent_size_tree, mtime_tree
         The summed sizes, and maximum modification time of all files within the subtree
-        starting at this directory. Set by `pdu.build_tree`.
+        starting at this directory. Set by `fdu.build_tree`.
     """
 
     name = pw.CharField()
@@ -126,8 +130,28 @@ class Directory(BaseModel):
     mtime_tree: int | None = None
 
     @classmethod
-    def query_totals(cls) -> pw.ModelSelect:
-        """Base query to select directories with directory totals."""
+    def query_totals(cls, user: User | None = None) -> pw.ModelSelect:
+        """Base query to select directories with directory totals.
+
+        Parameters
+        ----------
+        all
+            Return all directories, even if empty.
+
+        Returns
+        -------
+        query
+            An unevaluated select query that will return the directories.
+        """
+        if user:
+            kwargs = {
+                "on": (
+                    (File.directory_id == Directory.id) & (File.user_id == user.uid)
+                ),
+            }
+        else:
+            kwargs = {}
+
         return (
             cls.select(
                 cls,
@@ -139,7 +163,7 @@ class Directory(BaseModel):
                     0,
                 ).alias("mtime_dir"),
             )
-            .join(File, pw.JOIN.LEFT_OUTER)
+            .join(File, pw.JOIN.LEFT_OUTER, **kwargs)
             .group_by(cls)
         )
 
@@ -162,6 +186,7 @@ class Directory(BaseModel):
 
     @property
     def children(self) -> list[Self]:
+        """List of subdirectory entries."""
         subdir_names = sorted(self.subdirectories.keys())
         return [self.subdirectories[name] for name in subdir_names]
 
@@ -204,4 +229,32 @@ class File(BaseModel):
         indexes = (
             # create a unique on files names within a directory
             (("name", "directory"), True),
+            (("user", "directory"), False),
         )
+
+
+class JSONField(pw.TextField):
+    """Very simple JSON field."""
+
+    def db_value(self, value: JSONType) -> str:
+        """Serialize the python values for storage in the db."""
+
+        if value is None:
+            return None
+
+        return json.dumps(value)
+
+    def python_value(self, value: str) -> JSONType:
+        """Deserialize the DB string to JSON."""
+
+        if value is None:
+            return None
+
+        return json.loads(value)
+
+
+class Metadata(BaseModel):
+    """Store metadata about the scan."""
+
+    key = pw.CharField(256, primary_key=True)
+    value = JSONField()

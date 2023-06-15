@@ -1,6 +1,7 @@
 """Utility functions."""
 
 from collections.abc import Callable, Iterable
+import os
 from typing import Literal, Protocol, TypeVar
 
 T = TypeVar("T")
@@ -10,6 +11,12 @@ class HasChildren(Protocol):
     """A protocol for a tree like type."""
 
     children: list["HasChildren"]
+
+
+# Define the common unit definitions
+_symbols = ["B", "K", "M", "G", "T", "P"]
+_units_quota = {u: 1024 * 1000 ** (i - 1) for i, u in enumerate(_symbols)}
+_units_norm = {u: 1024**i for i, u in enumerate(_symbols)}
 
 
 def formatsize(size: int, unitspec: str, quota: bool = False) -> str:
@@ -34,11 +41,11 @@ def formatsize(size: int, unitspec: str, quota: bool = False) -> str:
 
     if quota:
         limit = 1000
-        units = {u: 2**10 * limit ** (i - 1) for i, u in enumerate(symbols)}
+        units = _units_quota
         suffix = "q"
     else:
         limit = 1024
-        units = {u: limit**i for i, u in enumerate(symbols)}
+        units = _units_norm
         suffix = ""
 
     unitspec = unitspec.upper()
@@ -55,6 +62,29 @@ def formatsize(size: int, unitspec: str, quota: bool = False) -> str:
     newsize = size / units[unit]
     minprec = 1 if newsize < 10 else 0  # noqa: PLR2004
     return f"{newsize:.{minprec}f}{unit}{suffix}"
+
+
+def parsesize(strsize: str) -> int:
+    """Parse a size string into bytes.
+
+    Parameters
+    ----------
+    strsize
+        The size to parse, e.g. 2T for 2 terabytes, or 17K for 17 kilobytes. Plain
+        integers, e.g. 17, are interpreted as bytes. Units are base-2.
+
+    Returns
+    -------
+    size
+        The size in bytes.
+    """
+
+    try:
+        if (unit := strsize[-1]).isalpha() and unit in _units_norm:
+            return int(strsize[:-1]) * _units_norm[unit]
+        return int(strsize)
+    except ValueError:
+        raise ValueError(f'Could not parse "{strsize}" into a size in bytes.')
 
 
 def walk_tree(
@@ -131,3 +161,26 @@ def agg_none(xl: Iterable[T | None], f: Callable[[Iterable[T]], T]) -> T | None:
         return None
 
     return f(xl)
+
+
+def print_trim(text: str, overwrite: bool = False, **kwargs: dict) -> None:
+    """Print text while cleanly trimming to the terminal size.
+
+    Parameters
+    ----------
+    text
+        The text to print.
+    overwrite
+        Overwrite the current line, e.g. for showing a progress update.
+    kwargs
+        Arguments passed directly to `print`.
+    """
+
+    ts = os.get_terminal_size()
+
+    trimmed_text = text[:ts.columns]
+
+    # \x1b[0K is VT100 erase to *end* of line then \r is move cursor to the start
+    end = "\x1b[0K\r" if overwrite else "\n"
+
+    print(trimmed_text, end=end, **kwargs)

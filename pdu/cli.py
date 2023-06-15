@@ -2,6 +2,7 @@
 from pathlib import Path
 
 import click
+import peewee as pw
 
 from . import orm, pdu, util
 
@@ -39,7 +40,20 @@ def cli() -> None:
         "This may be faster, with potential consistency issues."
     ),
 )
-def scan(path: Path, output: str, workers: int, in_memory: bool) -> None:
+@click.option(
+    "-X", "--exclude",
+    type=str,
+    multiple=True,
+    default=None,
+    help=(
+        "Exclude directories matching the given regex against their full path. Use "
+        "this option multiple times to different patterns. By default two patterns "
+        "are used `.*/.git` and `.*/site-packages`"
+    ),
+)
+def scan(
+    path: Path, output: str, workers: int, in_memory: bool, exclude: list[str] | None
+) -> None:
     """Scan the tree at the given PATH and save the results into OUTPUT."""
     if in_memory:
         orm.database.init(":memory:", pragmas={"foreign_keys": 1})
@@ -56,7 +70,13 @@ def scan(path: Path, output: str, workers: int, in_memory: bool) -> None:
             },
         )
     orm.database.create_tables(orm.BaseModel.__subclasses__())
-    pdu.scan_path(path, workers)
+
+    if exclude is None:
+        exclude = [
+            ".*/.git",
+            ".*/site-packages",
+        ]
+    fdu.scan_path(path, workers, exclude_patterns=exclude)
 
     if in_memory:
         orm.database.execute_sql("VACUUM INTO ?", (output,))
@@ -104,20 +124,34 @@ def scan(path: Path, output: str, workers: int, in_memory: bool) -> None:
     help="Query a subtree within a given dump.",
 )
 @click.option(
-    "--no-empty",
+    "--all",
     is_flag=True,
     type=bool,
     default=False,
-    help="Hide empty trees from the output.",
+    help="Print empty directory trees.",
 )
-def du(
+@click.option(
+    "--user",
+    type=str,
+    default=None,
+    help="Only count files owned by the given user.",
+)
+@click.option(
+    "--min-size",
+    type=str,
+    default=None,
+    help="Only print directories with a total larger than this.",
+)
+def query(
     inputfile: str,
     depth: int | None,
     unit: str,
     fields: str,
     quota: bool,
     subpath: Path,
-    no_empty: bool,
+    all: bool,
+    user: str,
+    min_size: str,
 ) -> None:
     """Query the INPUTFILE to get a du like output of the space usage.
 
@@ -133,13 +167,28 @@ def du(
     - `T`: the latest modification time of the subtree and its files
     """
     orm.database.init(inputfile)
-    root = pdu.build_tree(orm.Directory.query_totals())
+    if user:
+        try:
+            user = orm.User.get(name=user)
+        except pw.DoesNotExist:
+            raise ValueError(f"Unknown user {user}")
+
+    root = fdu.build_tree(orm.Directory.query_totals(user=user))
 
     if subpath:
-        root = pdu.extract_subtree(root, subpath)
+        root = fdu.extract_subtree(root, subpath)
 
-    _print = pdu.print_directory_fn(
-        columns=fields.split(","), unit=unit, quota=quota, no_empty=no_empty
+    if not all:
+        fdu.filter_tree(root, lambda d: d.file_count_tree > 0)
+
+    if min_size:
+        size = util.parsesize(min_size)
+        fdu.filter_tree(root, lambda d: d.allocated_size_tree > size)
+
+    _print = fdu.print_directory_fn(
+        columns=fields.split(","),
+        unit=unit,
+        quota=quota,
     )
     util.walk_tree(root, _print, order="pre", maxdepth=depth)
 
