@@ -58,7 +58,7 @@ def _process_dir(
 
 def exclude_subdir(path: Path, patterns: list[str]) -> bool:
     """Determine directories to exclude from scanning."""
-    return any(re.match(pattern, str(path)) for pattern in patterns)
+    return any(re.fullmatch(pattern, str(path)) for pattern in patterns)
 
 
 _uid_cache = {}
@@ -370,3 +370,4 @@ def filter_tree(root: Directory, f: Callable[[Directory], bool]) -> None:
         d.subdirectories = {n: c for n, c in d.subdirectories.items() if f(c)}
 
     walk_tree(root, _filter, order="post")
+

@@ -72,7 +72,7 @@ def scan(
         )
     orm.database.create_tables(orm.BaseModel.__subclasses__())
 
-    if exclude is None:
+    if exclude is None or len(exclude) == 0:
         exclude = [
             ".*/.git",
             ".*/site-packages",
