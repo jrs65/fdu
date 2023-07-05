@@ -41,6 +41,13 @@ def cli() -> None:
     ),
 )
 @click.option(
+    "-q",
+    "--quiet",
+    is_flag=True,
+    default=False,
+    help="Don't print progress information.",
+)
+@click.option(
     "-X",
     "--exclude",
     type=str,
@@ -57,6 +64,7 @@ def scan(
     output: str,
     workers: int,
     in_memory: bool,
+    quiet: bool,
     exclude: list[str] | None,
 ) -> None:
     """Scan the tree at the given PATH and save the results into OUTPUT."""
@@ -81,7 +89,7 @@ def scan(
             ".*/.git",
             ".*/site-packages",
         ]
-    fdu.scan_path(path, workers, exclude_patterns=exclude)
+    fdu.scan_path(path, workers, exclude_patterns=exclude, quiet=quiet)
 
     if in_memory:
         orm.database.execute_sql("VACUUM INTO ?", (output,))

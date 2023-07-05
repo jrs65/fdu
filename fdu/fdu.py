@@ -103,7 +103,9 @@ def _dir_from_path(path: Path, base: Path) -> Directory:
     return _dir_cache[path]
 
 
-def scan_path(root_path: Path, workers: int, exclude_patterns: list[str]) -> None:
+def scan_path(
+    root_path: Path, workers: int, exclude_patterns: list[str], quiet: bool
+) -> None:
     """Scan the directory tree and add to the database.
 
     Parameters
@@ -114,6 +116,8 @@ def scan_path(root_path: Path, workers: int, exclude_patterns: list[str]) -> Non
         Number of parallel workers to use.
     exclude_patterns
         List of subdirectories to exclude.
+    quiet
+        Don't output progess information.
     """
     count = 0
 
@@ -178,11 +182,12 @@ def scan_path(root_path: Path, workers: int, exclude_patterns: list[str]) -> Non
 
                     count += 1
 
-                    print_trim(
-                        f"Scanned {count} directories. Currently {path}",
-                        overwrite=True,
-                        file=sys.stderr,
-                    )
+                    if not quiet:
+                        print_trim(
+                            f"Scanned {count} directories. Currently {path}",
+                            overwrite=True,
+                            file=sys.stderr,
+                        )
 
     et = time.time()
 
