@@ -53,7 +53,11 @@ def cli() -> None:
     ),
 )
 def scan(
-    path: Path, output: str, workers: int, in_memory: bool, exclude: list[str] | None,
+    path: Path,
+    output: str,
+    workers: int,
+    in_memory: bool,
+    exclude: list[str] | None,
 ) -> None:
     """Scan the tree at the given PATH and save the results into OUTPUT."""
     if in_memory:
@@ -191,6 +195,41 @@ def query(
         unit=unit,
         quota=quota,
     )
+    util.walk_tree(root, _print, order="pre", maxdepth=depth)
+
+    orm.database.close()
+
+
+@cli.command()
+@click.argument(
+    "inputfile",
+    type=click.Path(dir_okay=False, file_okay=True, exists=True),
+)
+@click.option(
+    "-d",
+    "--depth",
+    type=int,
+    default=None,
+    help="Maximum depth of tree to print.",
+)
+@click.option(
+    "--subpath",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Query a subtree within a given dump.",
+)
+def unreachable(inputfile: str, depth: int, subpath: Path):
+    orm.database.init(inputfile)
+
+    root = fdu.build_tree(orm.Directory.select())
+
+    if subpath:
+        root = fdu.extract_subtree(root, subpath)
+
+    def _print(d: orm.Directory, depth: int):
+        if d.scan_status == orm.ScanStatus.SKIPPED_PERMISSION:
+            print(d.path)
+
     util.walk_tree(root, _print, order="pre", maxdepth=depth)
 
     orm.database.close()

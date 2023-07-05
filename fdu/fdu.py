@@ -370,4 +370,3 @@ def filter_tree(root: Directory, f: Callable[[Directory], bool]) -> None:
         d.subdirectories = {n: c for n, c in d.subdirectories.items() if f(c)}
 
     walk_tree(root, _filter, order="post")
-
